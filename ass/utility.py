@@ -86,7 +86,7 @@ def check_user_exist_online(username, online_clients):
     if username is '' or username is None or len(list(online_clients)) == 0:
         return False
     for sockets in online_clients:
-        if username in online_clients[sockets]['data'].decode():
+        if username == online_clients[sockets]['data'].decode():
             return True
     return False
 
