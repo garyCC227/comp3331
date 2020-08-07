@@ -21,13 +21,15 @@ server_socket.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
 server_socket.bind((server_host, server_port))
 server_socket.listen()
 
+# list of variable that support server
+# sockets_list: store all the working socket
+# blocked_clients: list that stores blocked account
+# online_clinets: list that stores all online clients
 sockets_list = [server_socket]
-
 blocked_clients = {}
-
 online_clients = {}
 
-print(f'Listening for connections on {server_host}:{server_port}\n')
+print(f'Server has and is listtening the connections on {server_host}:{server_port}\n')
 
 while(True):
 
@@ -36,6 +38,7 @@ while(True):
 
   for curr_socket in incoming_sockets:
 
+    # A new client connection comming
     if curr_socket is server_socket:
       
       # ***Accept a new client connection ***
@@ -46,19 +49,21 @@ while(True):
       #login retry count
       count_retry = 0
       while(True):
-        #{'header':header, 'data':data}
+        #return the proccessed message ->{'header':header, 'data':data}
         user = receive_message(client_socket=client_socket)
 
+        #something wrong with the receive message, it might be client close the connection
         if user is False:
           break
 
         credential = user['data'].decode().split(',')
-        # print(credential[0]) # username #TODO:DELETE
-        # print(credential[1]) # password 
+        # print(credential[0])  #[0] is username, [1]:password
+        # print(credential[1])
 
         # *** block duration ***
         #check block clients in blocked list
         for blocked in blocked_clients:
+          #compare with username
           if blocked_clients[blocked]['data'].decode() == credential[0]:
             username = blocked_clients[blocked]['data'].decode()
 
@@ -69,9 +74,9 @@ while(True):
             if blocked_time > blocked_clients[blocked]['blocked-time'] or blocked_time == blocked_clients[blocked]['blocked-time']:
               #unblock this client
               #TODO: uncomment print
-              print('unblock: {}'.format(username))
+              # print('unblock: {}'.format(username))
               if username == credential[0]:
-                message = 'Your account have been unblocked. {}, {}!'.format(curr_time.strftime("%d/%m/%Y, %H:%M:%S.%f")[:-3], username).encode()
+                message = 'Your account have been unblocked, time:{}. User: {}!'.format(curr_time.strftime("%d/%m/%Y, %H:%M:%S.%f")[:-3], username).encode()
                 message_header = f"{len(message):<{20}}".encode()
                 client_socket.send(message_header + message)
 
@@ -82,7 +87,7 @@ while(True):
             #the account is blocked at the monment
             elif blocked_time < blocked_clients[blocked]['blocked-time']:
               if username == credential[0]:
-                message = 'Your account is blocked {}. Please try again after {}s!'.format(username, block_duration).encode()
+                message = 'Your account is blocked {}. Try again after {}s!'.format(username, block_duration).encode()
                 message_header = f"{len(message):<{20}}".encode()
                 client_socket.send(message_header + message)
                 break
@@ -90,8 +95,6 @@ while(True):
 
         # ***check duplicate login
         if check_user_exist_online(username=credential[0], online_clients=online_clients):
-          #TODO uncomment print
-          print(f'AUTHENTICATION :{credential[0]} is already online. FAILED!')
           message = f'{credential[0]} is already online!'.encode()
           message_header = f"{len(message):<{20}}".encode()
           client_socket.send(message_header + message)
@@ -99,22 +102,31 @@ while(True):
 
         # ***authentication start***
         result = authenticate(credential=credential)
-        print(f'AUTHENTICATION for {credential[0]}: {result}')
+        print(f'Checking credentials for User ->{credential[0]}: {result}')
 
         if 'Successful' in result:
           sockets_list.append(client_socket)
 
           #store online user info
+          # we will generate a tempID when a user register
+          # store the tempID start_time and expired_time
           user['data'] = credential[0].encode()
           user['header'] = f"{len(user['data']):<{20}}".encode()
+          user['tempID'] = random_with_N_digits(20)
+          curr_time = datetime.datetime.now()
+          user['tempID_start_time'] = curr_time
+          user['tempID_end_time'] = curr_time + datetime.timedelta(minutes=15)
 
-          #TODO: TempID...
+          #write into tempIDs.txt
+          write_to_tempIDs(user)
+
+          #register a new client_socket into online clients
           online_clients[client_socket] = user
 
-          print('Accepted new connection from {}:{} ~> {}'.format(*client_addr, user['data'].decode()))
+          print('Accepted new connection from {}:{} -> {}'.format(*client_addr, user['data'].decode()))
 
-          #send welcome message
-          message = 'Welcome back {}! BlueTrace Simulator '.format(user['data'].decode()).encode()
+          #send welcome message to client
+          message = 'Welcome back {}! Here is BlueTrace Simulator '.format(user['data'].decode()).encode()
           message_header = f"{len(message):<{20}}".encode()
           client_socket.send(message_header + message)
           break
@@ -123,8 +135,7 @@ while(True):
         elif 'Password' in result:
           count_retry +=1
           if count_retry >=3:
-            # print('BLOCKED: {}\'s account. Retry count :{}'.format(credentials[0], retry_count))
-            
+        
             user['data'] = credential[0].encode()
             user['blocked-time']=datetime.datetime.now()
 
@@ -143,6 +154,7 @@ while(True):
             client_socket.send(msg_header + msg)
         
         #invalid username
+        #send back this message: 'Invalid Username. Please try again!'
         else:
           msg = result.encode()
           msg_header = f"{len(msg):<{20}}".encode()
@@ -151,10 +163,10 @@ while(True):
     #existing socket sending message
     #after authentication successful, server start communicate with client for certain commands
     elif curr_socket in online_clients:
-      print("logiined print")
       #get user information
       user = online_clients[curr_socket]
 
+      # some wrong with coming message. it might be client close the connection
       if user is False:
         continue
       
@@ -163,7 +175,6 @@ while(True):
       
       #if message false, mean, client close connection
       if message is False:
-        print("I am here")
         print('Closed connection from: {}'.format(online_clients[curr_socket]['data'].decode()))
 
         #remove socket and client from the GLOBAL variables
@@ -173,7 +184,8 @@ while(True):
       
       # *** execute command ***
       command = message["data"].decode().strip().split(' ')[0]
-      print("receive command:{}".format(command))
+      whole_message = message["data"].decode()
+      print("Receive command:{}".format(command))
 
       # *** command: logout***
       if command == 'logout':
@@ -185,87 +197,52 @@ while(True):
         message = 'Logged out successful at {} Bye!'.format(curr_time.strftime("%d/%m/%Y, %H:%M:%S.%f")[:-3]).encode()
         message_header = f"{len(message):<{20}}".encode()
         curr_socket.send(user['header'] + user['data'] + message_header + message)
+      
 
+      # *** command: Download_tempID ***
+      elif command == 'Download_tempID':
+        username = user['data']
+        tempID = user['tempID']
+        end_time = user['tempID_end_time']
+        # end_time = datetime.datetime.now() - datetime.timedelta(minutes=15)
 
-# #TODO: delete
-# t_lock=threading.Condition()
-# #will store clients info in this list
-# clients=[]
-# # would communicate with clients after every second
-# UPDATE_INTERVAL= 1
-# timeout=False
+        # if tempID expired, generate a new one
+        if tempID_expired(username, tempID, end_time):
+          user['tempID'] = random_with_N_digits(20)
+          curr_time = datetime.datetime.now()
+          user['tempID_start_time'] = curr_time
+          user['tempID_end_time'] = curr_time + datetime.timedelta(minutes=15)
+          tempID = user['tempID']
 
+          #update tempIDs.txt
+          write_to_tempIDs(user)
 
-# def recv_handler():
-#     global t_lock
-#     global clients
-#     global clientSocket
-#     global serverSocket
-#     print('Server is ready for service')
-#     while(1):
+        print('user: {}'.format(username.decode()))
+        print('TempID: {}'.format(str(tempID)))
+
+        message = 'TempID: {}'.format(str(tempID)).encode()
+        message_header = f"{len(message):<{20}}".encode()
+        curr_socket.send(user['header'] + user['data'] + message_header + message)
+      
+      #*** command: upload_contact_log
+      # print the receive contact_log out, and print the contact_log checking result out
+      # then send back a succesfully response to client
+      elif 'Upload_contact_log' in whole_message:
+        message = whole_message.split("::")
+        logs = message[1].split('\n')
+
+        username = user['data']
+        print('from {}'.format(username.decode()))
+        for log in logs:
+          print(log)
         
-#         message, clientAddress = serverSocket.recvfrom(2048)
-#         #received data from the client, now we know who we are talking with
-#         message = message.decode()
-#         #get lock as we might me accessing some shared data structures
-#         with t_lock:
-#             currtime = dt.datetime.now()
-#             date_time = currtime.strftime("%d/%m/%Y, %H:%M:%S")
-#             print('Received request from', clientAddress[0], 'listening at', clientAddress[1], ':', message, 'at time ', date_time)
-#             if(message == 'Subscribe'):
-#                 #store client information (IP and Port No) in list
-#                 clients.append(clientAddress)
-#                 serverMessage="Subscription successfull"
-#             elif(message=='Unsubscribe'):
-#                 #check if client already subscribed or not
-#                 if(clientAddress in clients):
-#                     clients.remove(clientAddress)
-#                     serverMessage="Subscription removed"
-#                 else:
-#                     serverMessage="You are not currently subscribed"
-#             else:
-#                 serverMessage="Unknown command, send Subscribe or Unsubscribe only"
-#             #send message to the client
-#             serverSocket.sendto(serverMessage.encode(), clientAddress)
-#             #notify the thread waiting
-#             t_lock.notify()
+        #contact log checking
+        print("\n")
+        print("Contact log checking")
+        for log in logs:
+          print_contact_log_checking(log)
 
-
-# def send_handler():
-#     global t_lock
-#     global clients
-#     global clientSocket
-#     global serverSocket
-#     global timeout
-#     #go through the list of the subscribed clients and send them the current time after every 1 second
-#     while(1):
-#         #get lock
-#         with t_lock:
-#             for i in clients:
-#                 currtime =dt.datetime.now()
-#                 date_time = currtime.strftime("%d/%m/%Y, %H:%M:%S")
-#                 message='Current time is ' + date_time
-#                 clientSocket.sendto(message.encode(), i)
-#                 print('Sending time to', i[0], 'listening at', i[1], 'at time ', date_time)
-#             #notify other thread
-#             t_lock.notify()
-#         #sleep for UPDATE_INTERVAL
-#         time.sleep(UPDATE_INTERVAL)
-
-# #we will use two sockets, one for sending and one for receiving
-# clientSocket = socket(AF_INET, SOCK_DGRAM)
-# serverSocket = socket(AF_INET, SOCK_DGRAM)
-# serverSocket.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
-# serverSocket.bind(('localhost', serverPort))
-
-# recv_thread=threading.Thread(name="RecvHandler", target=recv_handler)
-# recv_thread.daemon=True
-# recv_thread.start()
-
-# send_thread=threading.Thread(name="SendHandler",target=send_handler)
-# send_thread.daemon=True
-# send_thread.start()
-# #this is the main thread
-# while True:
-#     time.sleep(0.1)
+        message = 'Upload contact log successfully'.encode()
+        message_header = f"{len(message):<{20}}".encode()
+        curr_socket.send(user['header'] + user['data'] + message_header + message)
 
